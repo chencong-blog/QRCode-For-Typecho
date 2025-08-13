@@ -4,7 +4,7 @@
  * 
  * @package QRCode
  * @author 蔥籽
- * @version 1.0.6
+ * @version 1.0.8
  * @link https://chencong.blog
  */
 if (!defined('__TYPECHO_ROOT_DIR__')) {
@@ -55,7 +55,7 @@ class QRCode_Plugin implements Typecho_Plugin_Interface
         );
         $form->addInput($position);
         
-        // 二维码大小设置 - 增加范围限制
+        // 二维码大小设置
         $size = new Typecho_Widget_Helper_Form_Element_Text(
             'size',
             null,
@@ -106,11 +106,37 @@ class QRCode_Plugin implements Typecho_Plugin_Interface
         $errorLevel = new Typecho_Widget_Helper_Form_Element_Radio(
             'errorLevel',
             $errorLevelOptions,
-            'H',
+            'L',
             _t('错误纠正码率'),
             _t('设置二维码的错误纠正能力')
         );
         $form->addInput($errorLevel);
+        
+        // 二维码描述文字设置
+        $description = new Typecho_Widget_Helper_Form_Element_Text(
+            'description',
+            null,
+            '扫码访问当前页面',
+            _t('二维码描述文字'),
+            _t('设置显示在二维码下方的说明文字')
+        );
+        $description->addRule('required', _t('请输入描述文字'));
+        $form->addInput($description);
+        
+        // 新增：描述文字字体大小设置
+        $descFontSize = new Typecho_Widget_Helper_Form_Element_Text(
+            'descFontSize',
+            null,
+            '16',
+            _t('描述文字大小'),
+            _t('设置二维码下方文字的字体大小，单位为像素，范围建议12-24')
+        );
+        $descFontSize->addRule('isInteger', _t('请输入有效的数字'));
+        $descFontSize->addRule(function($size) {
+            $value = intval($size);
+            return $value >= 12 && $value <= 24;
+        }, _t('请输入12-24之间的数字'));
+        $form->addInput($descFontSize);
         
         // 显示页面设置
         $showOn = new Typecho_Widget_Helper_Form_Element_Checkbox(
@@ -161,10 +187,8 @@ class QRCode_Plugin implements Typecho_Plugin_Interface
         $options = Typecho_Widget::widget('Widget_Options')->plugin('QRCode');
         
         try {
-            // 尝试获取Archive实例，捕获可能的初始化异常
             $archive = Typecho_Widget::widget('Widget_Archive');
         } catch (Typecho\Widget\Exception $e) {
-            // 若Archive初始化失败（如404页面），直接返回不显示二维码
             return $footer;
         }
         
@@ -172,7 +196,6 @@ class QRCode_Plugin implements Typecho_Plugin_Interface
         $show = false;
         $showOn = $options->showOn ?: array();
         
-        // 完善页面类型判断逻辑，覆盖所有场景
         if (
             ($archive->is('index') && in_array('index', $showOn)) ||
             ($archive->is('post') && in_array('post', $showOn)) ||
@@ -183,7 +206,7 @@ class QRCode_Plugin implements Typecho_Plugin_Interface
             $show = true;
         }
         
-        // 特殊场景：404页面强制不显示
+        // 404页面强制不显示
         if ($archive->is404()) {
             $show = false;
         }
@@ -192,7 +215,7 @@ class QRCode_Plugin implements Typecho_Plugin_Interface
             return $footer;
         }
         
-        // 获取当前页面URL（兼容不同页面类型）
+        // 获取当前页面URL
         $currentUrl = '';
         if ($archive->is('index')) {
             $currentUrl = Typecho_Widget::widget('Widget_Options')->siteUrl;
@@ -202,10 +225,27 @@ class QRCode_Plugin implements Typecho_Plugin_Interface
         
         // 配置参数处理
         $size = intval($options->size);
-        $size = max(50, min(300, $size)); // 强制范围限制
+        $size = max(50, min(300, $size));
         $position = $options->position ?: 'right';
         $errorLevel = $options->errorLevel ?: 'H';
-        $showDevices = $options->showDevices ?: array('desktop', 'tablet', 'mobile');
+        
+        // 修复设备显示逻辑：区分未设置和主动取消
+        $showDevices = $options->showDevices;
+        
+        // 关键修复：区分用户从未配置和主动取消所有选项
+        if (is_null($showDevices)) {
+            // 用户从未配置过设备选项，使用默认值
+            $showDevices = array('desktop', 'tablet', 'mobile');
+        } elseif (empty($showDevices)) {
+            // 用户主动取消了所有设备选项，不显示二维码
+            return $footer;
+        }
+        
+        $description = $options->description ?: '扫码访问当前页面';
+        
+        // 处理描述文字大小参数
+        $descFontSize = intval($options->descFontSize);
+        $descFontSize = max(12, min(24, $descFontSize)); // 强制范围限制
         
         // 颜色格式验证
         $colorDark = $options->colorDark ?: '#000000';
@@ -227,7 +267,9 @@ class QRCode_Plugin implements Typecho_Plugin_Interface
         echo '.qrcode-wrapper {position: fixed; z-index: 999; padding: 15px; background: #fff; border-radius: 5px; box-shadow: 0 2px 12px rgba(0,0,0,0.1); transition: all 0.3s ease;}';
         echo '.qrcode-wrapper:hover {box-shadow: 0 4px 16px rgba(0,0,0,0.15);}';
         echo '.qrcode-img {width: ' . $size . 'px; height: ' . $size . 'px;}';
-        echo '.qrcode-desc {text-align: center; font-weight: bold; font-size: 16px; color: #666; margin-top: 10px;}';
+        
+        // 使用自定义字体大小
+        echo '.qrcode-desc {text-align: center; font-weight: bold; font-size: ' . $descFontSize . 'px; color: #666; margin-top: 10px;}';
         
         // 位置样式
         switch ($position) {
@@ -257,7 +299,7 @@ class QRCode_Plugin implements Typecho_Plugin_Interface
         // 输出HTML和脚本
         echo '<div class="qrcode-wrapper">';
         echo '<div id="qrcode" class="qrcode-img"></div>';
-        echo '<div class="qrcode-desc">扫码访问当前页面</div>';
+        echo '<div class="qrcode-desc">' . htmlspecialchars($description) . '</div>';
         echo '</div>';
         
         echo '<script src="/usr/plugins/QRCode/js/qrcode.min.js"></script>';
